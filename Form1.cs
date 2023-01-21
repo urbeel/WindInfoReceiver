@@ -2,8 +2,10 @@ using NLog;
 using NLog.Config;
 using PortsApp.Entity;
 using PortsApp.Exception;
+using System;
 using System.Globalization;
 using System.IO.Ports;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using static System.Double;
@@ -13,6 +15,8 @@ namespace PortsApp
     public partial class Form1 : Form
     {
         private static SerialPort? _serialPort;
+
+        private static readonly StringBuilder _buffer = new(32);
 
         private static Logger? logger;
 
@@ -44,10 +48,17 @@ namespace PortsApp
 
             const string SensorName = "WMT700";
 
-            string messageFromSensor = _serialPort.ReadLine();
+            _buffer.Append(_serialPort.ReadExisting().Replace("\r\n", string.Empty));
+            string? message = GetMessageFromBuffer();
+
+            if (message == null)
+            {
+                return;
+            }
+
             try
             {
-                ParseSensorMessage(messageFromSensor, out double windSpeed, out double windDirection);
+                ParseSensorMessage(message, out double windSpeed, out double windDirection);
                 var windInfo = new WindInfo(DateTime.Now, SensorName, windSpeed, windDirection);
 
                 string filePath = tbFilePath.Text;
@@ -71,14 +82,37 @@ namespace PortsApp
                     windInfoList = new List<WindInfo>();
                 }
                 windInfoList.Add(windInfo);
-                JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
+                var options = new JsonSerializerOptions { WriteIndented = true };
                 jsonData = JsonSerializer.Serialize(windInfoList, options);
                 File.WriteAllText(filePath, jsonData);
             }
             catch (InvalidMessageFormatException ex)
             {
                 MessageBox.Show(ex.Message);
-                logger?.Warn($"Format of message {messageFromSensor} from port {_serialPort.PortName} is invalid. Exception: {ex.GetType().Name}.");
+                logger?.Warn($"Format of message {message} from port {_serialPort.PortName} is invalid. Exception: {ex.GetType().Name}.");
+            }
+        }
+
+        private static string? GetMessageFromBuffer()
+        {
+            string bufferStr = _buffer.ToString();
+            int index = bufferStr.IndexOf('$');
+            if (index != -1)
+            {
+                try
+                {
+                    string message = bufferStr.Substring(index, 13);
+                    _buffer.Remove(0, index + 13);
+                    return message;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    return null;
+                }
+            }
+            else
+            {
+                return null;
             }
         }
 
@@ -128,7 +162,7 @@ namespace PortsApp
                 {
                     const Int32 DataBits = 8;
 
-                    _serialPort = new SerialPort(portName, 2400, Parity.Space, DataBits, StopBits.One);
+                    _serialPort = new SerialPort(portName, 2400, Parity.None, DataBits, StopBits.One);
                     _serialPort.DataReceived += new SerialDataReceivedEventHandler(SerialPortDataReceivedEventHandler);
                     try
                     {
@@ -162,10 +196,12 @@ namespace PortsApp
             const string DefaultFileName = "WindInfo";
             const string DefaultFileFilter = "JSON (*.json)|*.json";
 
-            var saveFileDialog = new SaveFileDialog();
-            saveFileDialog.Filter = DefaultFileFilter;
-            saveFileDialog.FileName = DefaultFileName;
-            saveFileDialog.OverwritePrompt = false;
+            var saveFileDialog = new SaveFileDialog
+            {
+                Filter = DefaultFileFilter,
+                FileName = DefaultFileName,
+                OverwritePrompt = false
+            };
 
             if (saveFileDialog.ShowDialog() == DialogResult.OK)
             {
