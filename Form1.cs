@@ -57,7 +57,14 @@ namespace PortsApp
                 if (File.Exists(filePath))
                 {
                     jsonData = File.ReadAllText(filePath);
-                    windInfoList = JsonSerializer.Deserialize<List<WindInfo>>(jsonData) ?? new List<WindInfo>();
+                    try
+                    {
+                        windInfoList = JsonSerializer.Deserialize<List<WindInfo>>(jsonData) ?? new List<WindInfo>();
+                    }
+                    catch (JsonException)
+                    {
+                        windInfoList = new List<WindInfo>();
+                    }
                 }
                 else
                 {
